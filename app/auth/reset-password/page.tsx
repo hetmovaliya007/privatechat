@@ -1,29 +1,31 @@
 "use client";
 import { useState } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { MessageSquare, Mail, Lock, Eye, EyeOff, ArrowRight } from "lucide-react";
+import { MessageSquare, Lock, Eye, EyeOff, ArrowRight } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import toast from "react-hot-toast";
 
-export default function LoginPage() {
+export default function ResetPasswordPage() {
   const router = useRouter();
-  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [confirm, setConfirm] = useState("");
   const [showPass, setShowPass] = useState(false);
   const [loading, setLoading] = useState(false);
 
-  const handleLogin = async (e: React.FormEvent) => {
+  const handleReset = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!email || !password) return toast.error("Fill all fields");
+    if (!password || !confirm) return toast.error("Sab fields bharo");
+    if (password.length < 6) return toast.error("Password 6+ characters hona chahiye");
+    if (password !== confirm) return toast.error("Passwords match nahi kar rahe");
+
     setLoading(true);
     try {
-      const { error } = await supabase.auth.signInWithPassword({ email, password });
+      const { error } = await supabase.auth.updateUser({ password });
       if (error) throw error;
-      toast.success("Welcome back!");
+      toast.success("Password update ho gaya!");
       router.push("/chat");
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : "Login failed");
+      toast.error(err instanceof Error ? err.message : "Reset failed");
     } finally {
       setLoading(false);
     }
@@ -32,7 +34,6 @@ export default function LoginPage() {
   return (
     <div className="w-full max-w-sm px-4 animate-slide-up">
       <div className="glass rounded-2xl p-8">
-        {/* Logo */}
         <div className="flex items-center gap-2 mb-8">
           <div className="w-9 h-9 rounded-xl bg-accent flex items-center justify-center glow-accent">
             <MessageSquare size={18} className="text-white" />
@@ -40,28 +41,15 @@ export default function LoginPage() {
           <span className="font-bold text-xl text-text">VoidChat</span>
         </div>
 
-        <h2 className="text-2xl font-bold text-text mb-1">Sign in</h2>
-        <p className="text-text-dim text-sm mb-8">Welcome back to the void.</p>
+        <h2 className="text-2xl font-bold text-text mb-1">Naya Password</h2>
+        <p className="text-text-dim text-sm mb-8">Apna naya password set karo.</p>
 
-        <form onSubmit={handleLogin} className="space-y-4">
-          {/* Email */}
-          <div className="relative">
-            <Mail size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-dim" />
-            <input
-              type="email"
-              placeholder="Email address"
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full bg-surface border border-border rounded-xl pl-10 pr-4 py-3 text-text text-sm placeholder:text-muted focus:border-accent/50 transition-colors"
-            />
-          </div>
-
-          {/* Password */}
+        <form onSubmit={handleReset} className="space-y-4">
           <div className="relative">
             <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-dim" />
             <input
               type={showPass ? "text" : "password"}
-              placeholder="Password"
+              placeholder="Naya password (min 6 chars)"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               className="w-full bg-surface border border-border rounded-xl pl-10 pr-10 py-3 text-text text-sm placeholder:text-muted focus:border-accent/50 transition-colors"
@@ -72,8 +60,15 @@ export default function LoginPage() {
             </button>
           </div>
 
-          <div className="text-right">
-            <Link href="/auth/forgot-password" className="text-accent text-xs hover:underline">Forgot password?</Link>
+          <div className="relative">
+            <Lock size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-dim" />
+            <input
+              type={showPass ? "text" : "password"}
+              placeholder="Password confirm karo"
+              value={confirm}
+              onChange={(e) => setConfirm(e.target.value)}
+              className="w-full bg-surface border border-border rounded-xl pl-10 pr-4 py-3 text-text text-sm placeholder:text-muted focus:border-accent/50 transition-colors"
+            />
           </div>
 
           <button type="submit" disabled={loading}
@@ -81,15 +76,10 @@ export default function LoginPage() {
             {loading ? (
               <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
             ) : (
-              <>Sign In <ArrowRight size={15} /></>
+              <>Password Update Karo <ArrowRight size={15} /></>
             )}
           </button>
         </form>
-
-        <p className="text-center text-text-dim text-sm mt-6">
-          No account?{" "}
-          <Link href="/auth/signup" className="text-accent hover:underline">Create one</Link>
-        </p>
       </div>
     </div>
   );
