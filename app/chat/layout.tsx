@@ -19,12 +19,37 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
       .select(`room_id, rooms(id, name, description, type, created_by, avatar_url, created_at)`)
       .eq("user_id", userId);
 
-    if (data) {
-      const roomList = data
-        .map((d: { rooms: unknown }) => d.rooms)
-        .filter(Boolean) as Room[];
-      setRooms(roomList);
-    }
+    if (!data) return;
+    const roomList = data.map((d: { rooms: unknown }) => d.rooms).filter(Boolean) as Room[];
+
+    // Fetch last message + unread count for each room
+    const enriched = await Promise.all(
+      roomList.map(async (room) => {
+        const { data: lastMsgs } = await supabase
+          .from("messages")
+          .select("id, content, type, sender_id, created_at, sender:profiles(id, username)")
+          .eq("room_id", room.id)
+          .eq("is_deleted", false)
+          .order("created_at", { ascending: false })
+          .limit(1);
+
+        const lastMsg = lastMsgs?.[0];
+        return {
+          ...room,
+          last_message: lastMsg ?? undefined,
+          unread_count: 0, // unread tracking requires read receipts table; default 0
+        } as Room;
+      })
+    );
+
+    // Sort by most recent message
+    enriched.sort((a, b) => {
+      const aTime = a.last_message?.created_at ?? a.created_at;
+      const bTime = b.last_message?.created_at ?? b.created_at;
+      return new Date(bTime).getTime() - new Date(aTime).getTime();
+    });
+
+    setRooms(enriched);
   }, []);
 
   useEffect(() => {

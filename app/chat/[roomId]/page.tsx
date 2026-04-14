@@ -6,11 +6,12 @@ import { encryptMessage, decryptMessage } from "@/lib/encryption";
 import { formatDistanceToNow } from "date-fns";
 import {
   Hash, Lock, Users, Paperclip, Smile, Send,
-  X, Reply, Edit2, Trash2, MoreHorizontal,
-  Shield, ChevronDown, Image as ImageIcon
+  X, Reply, Edit2, Trash2,
+  Shield, ChevronDown, UserPlus, ChevronUp
 } from "lucide-react";
 import toast from "react-hot-toast";
-import type { Message, Room, User } from "@/types";
+import type { Message, Room, User, Reaction } from "@/types";
+import InviteMemberModal from "@/components/chat/InviteMemberModal";
 
 const TYPING_TIMEOUT = 2500;
 
@@ -29,7 +30,12 @@ export default function ChatRoomPage() {
   const [showMembers, setShowMembers] = useState(false);
   const [uploadingFile, setUploadingFile] = useState(false);
   const [showScrollBtn, setShowScrollBtn] = useState(false);
-  const [activeMenu, setActiveMenu] = useState<string | null>(null);
+  const [showEmojiPicker, setShowEmojiPicker] = useState<string | null>(null);
+  const [reactions, setReactions] = useState<Reaction[]>([]);
+  const [showInvite, setShowInvite] = useState(false);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const oldestMsgRef = useRef<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
@@ -70,22 +76,71 @@ export default function ChatRoomPage() {
         .select("*, sender:profiles(id, username, email, status, avatar_url)")
         .eq("room_id", roomId)
         .eq("is_deleted", false)
-        .order("created_at", { ascending: true })
-        .limit(100);
+        .order("created_at", { ascending: false })
+        .limit(50);
 
       if (msgs) {
-        const decrypted = msgs.map((m: Message) => ({
+        const ordered = msgs.reverse();
+        const decrypted = ordered.map((m: Message) => ({
           ...m,
           content: m.type === "text" ? decryptMessage(m.content) : m.content,
         }));
         setMessages(decrypted);
+        setHasMore(msgs.length === 50);
+        if (ordered.length > 0) oldestMsgRef.current = ordered[0].created_at;
       }
+
+      // Reactions
+      const { data: rxns } = await supabase
+        .from("reactions")
+        .select("*")
+        .in("message_id", msgs?.map((m: Message) => m.id) ?? []);
+      if (rxns) setReactions(rxns as Reaction[]);
 
       setLoading(false);
       setTimeout(() => scrollToBottom(false), 100);
     };
     init();
   }, [roomId, scrollToBottom]);
+
+  const loadOlderMessages = async () => {
+    if (!oldestMsgRef.current || loadingMore) return;
+    setLoadingMore(true);
+    const { data: msgs } = await supabase
+      .from("messages")
+      .select("*, sender:profiles(id, username, email, status, avatar_url)")
+      .eq("room_id", roomId)
+      .eq("is_deleted", false)
+      .lt("created_at", oldestMsgRef.current)
+      .order("created_at", { ascending: false })
+      .limit(50);
+    if (msgs && msgs.length > 0) {
+      const ordered = msgs.reverse();
+      const decrypted = ordered.map((m: Message) => ({
+        ...m,
+        content: m.type === "text" ? decryptMessage(m.content) : m.content,
+      }));
+      setMessages(prev => [...decrypted, ...prev]);
+      setHasMore(msgs.length === 50);
+      oldestMsgRef.current = ordered[0].created_at;
+    } else {
+      setHasMore(false);
+    }
+    setLoadingMore(false);
+  };
+
+  const toggleReaction = async (msgId: string, emoji: string) => {
+    if (!currentUser) return;
+    const existing = reactions.find(r => r.message_id === msgId && r.user_id === currentUser.id && r.emoji === emoji);
+    if (existing) {
+      await supabase.from("reactions").delete().eq("id", existing.id);
+      setReactions(prev => prev.filter(r => r.id !== existing.id));
+    } else {
+      const { data } = await supabase.from("reactions").insert({ message_id: msgId, user_id: currentUser.id, emoji }).select().single();
+      if (data) setReactions(prev => [...prev, data as Reaction]);
+    }
+    setShowEmojiPicker(null);
+  };
 
   // Real-time subscriptions
   useEffect(() => {
@@ -99,12 +154,22 @@ export default function ChatRoomPage() {
         filter: `room_id=eq.${roomId}`,
       }, async (payload) => {
         const newMsg = payload.new as Message;
-        // Fetch sender info
         const { data: sender } = await supabase.from("profiles").select("*").eq("id", newMsg.sender_id).single();
+        // Fetch reply_message if needed
+        let reply_message: Message | undefined;
+        if (newMsg.reply_to) {
+          const { data: rm } = await supabase
+            .from("messages")
+            .select("*, sender:profiles(id, username, email, status, avatar_url)")
+            .eq("id", newMsg.reply_to)
+            .single();
+          if (rm) reply_message = { ...rm, content: rm.type === "text" ? decryptMessage(rm.content) : rm.content };
+        }
         const fullMsg: Message = {
           ...newMsg,
           content: newMsg.type === "text" ? decryptMessage(newMsg.content) : newMsg.content,
           sender: sender as User,
+          reply_message,
         };
         setMessages(prev => {
           if (prev.find(m => m.id === fullMsg.id)) return prev;
@@ -143,9 +208,21 @@ export default function ChatRoomPage() {
       })
       .subscribe();
 
+    // Reactions channel
+    const rxnChannel = supabase
+      .channel(`reactions-${roomId}`)
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "reactions" }, (payload) => {
+        setReactions(prev => [...prev, payload.new as Reaction]);
+      })
+      .on("postgres_changes", { event: "DELETE", schema: "public", table: "reactions" }, (payload) => {
+        setReactions(prev => prev.filter(r => r.id !== payload.old.id));
+      })
+      .subscribe();
+
     return () => {
       supabase.removeChannel(msgChannel);
       supabase.removeChannel(typingChannel);
+      supabase.removeChannel(rxnChannel);
     };
   }, [roomId, currentUser?.id, scrollToBottom]);
 
@@ -162,18 +239,20 @@ export default function ChatRoomPage() {
   const sendMessage = async () => {
     if ((!input.trim() && !editingMsg) || sending || !currentUser) return;
     setSending(true);
-
     try {
       if (editingMsg) {
-        // Edit existing message
         const encrypted = encryptMessage(input.trim());
         await supabase.from("messages").update({ content: encrypted, is_edited: true }).eq("id", editingMsg.id);
         setEditingMsg(null);
         setInput("");
       } else {
-        // New message
         const encrypted = encryptMessage(input.trim());
-        await supabase.from("messages").insert({
+        // Fetch reply_message for optimistic UI
+        let reply_message: Message | undefined;
+        if (replyTo) {
+          reply_message = messages.find(m => m.id === replyTo.id);
+        }
+        const { data: inserted } = await supabase.from("messages").insert({
           room_id: roomId,
           sender_id: currentUser.id,
           content: encrypted,
@@ -181,7 +260,14 @@ export default function ChatRoomPage() {
           reply_to: replyTo?.id || null,
           is_edited: false,
           is_deleted: false,
-        });
+        }).select().single();
+        if (inserted) {
+          setMessages(prev => {
+            if (prev.find(m => m.id === inserted.id)) return prev;
+            return [...prev, { ...inserted, content: input.trim(), sender: currentUser, reply_message }];
+          });
+          scrollToBottom();
+        }
         setInput("");
         setReplyTo(null);
       }
@@ -194,7 +280,6 @@ export default function ChatRoomPage() {
 
   const deleteMessage = async (msgId: string) => {
     await supabase.from("messages").update({ is_deleted: true, content: "" }).eq("id", msgId);
-    setActiveMenu(null);
     toast.success("Message deleted");
   };
 
@@ -282,6 +367,15 @@ export default function ChatRoomPage() {
         </div>
 
         <div className="flex items-center gap-2 shrink-0">
+          {room?.type === "group" && (
+            <button
+              onClick={() => setShowInvite(true)}
+              className="p-1.5 rounded-lg text-text-dim hover:text-accent hover:bg-accent/10 transition-all"
+              title="Invite member"
+            >
+              <UserPlus size={14} />
+            </button>
+          )}
           <button
             onClick={() => setShowMembers(!showMembers)}
             className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-all ${showMembers ? "bg-accent/15 text-accent" : "text-text-dim hover:text-text hover:bg-panel"}`}
@@ -300,6 +394,24 @@ export default function ChatRoomPage() {
             onScroll={handleScroll}
             className="flex-1 overflow-y-auto px-5 py-4 space-y-1"
           >
+            {/* Load older messages */}
+            {hasMore && (
+              <div className="flex justify-center py-2">
+                <button
+                  onClick={loadOlderMessages}
+                  disabled={loadingMore}
+                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs text-text-dim hover:text-text hover:bg-panel transition-all disabled:opacity-50"
+                >
+                  {loadingMore ? (
+                    <div className="w-3 h-3 border border-accent/30 border-t-accent rounded-full animate-spin" />
+                  ) : (
+                    <ChevronUp size={12} />
+                  )}
+                  Load older messages
+                </button>
+              </div>
+            )}
+
             {messages.length === 0 && (
               <div className="flex flex-col items-center justify-center h-full gap-3 text-center">
                 <div className="w-14 h-14 rounded-2xl bg-accent/10 flex items-center justify-center">
@@ -341,9 +453,10 @@ export default function ChatRoomPage() {
                     )}
 
                     {/* Reply preview */}
-                    {msg.reply_to && (
-                      <div className={`text-[10px] text-text-dim border-l-2 border-accent/40 pl-2 mb-1 ${own ? "text-right border-r-2 border-l-0 pr-2 pl-0" : ""}`}>
-                        Replying to a message
+                    {msg.reply_to && msg.reply_message && (
+                      <div className={`text-[10px] text-text-dim border-l-2 border-accent/40 pl-2 mb-1 max-w-[200px] truncate ${own ? "text-right border-r-2 border-l-0 pr-2 pl-0" : ""}`}>
+                        <span className="text-accent/70">{msg.reply_message.sender?.username}: </span>
+                        {msg.reply_message.type === "text" ? msg.reply_message.content : `[${msg.reply_message.type}]`}
                       </div>
                     )}
 
@@ -372,12 +485,56 @@ export default function ChatRoomPage() {
                       )}
                     </div>
 
+                    {/* Reactions display */}
+                    {(() => {
+                      const msgReactions = reactions.filter(r => r.message_id === msg.id);
+                      const grouped = msgReactions.reduce((acc, r) => {
+                        acc[r.emoji] = (acc[r.emoji] || 0) + 1;
+                        return acc;
+                      }, {} as Record<string, number>);
+                      return Object.keys(grouped).length > 0 ? (
+                        <div className="flex flex-wrap gap-1 mt-1">
+                          {Object.entries(grouped).map(([emoji, count]) => (
+                            <button
+                              key={emoji}
+                              onClick={() => toggleReaction(msg.id, emoji)}
+                              className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-full text-[11px] border transition-all ${
+                                reactions.some(r => r.message_id === msg.id && r.user_id === currentUser?.id && r.emoji === emoji)
+                                  ? "bg-accent/20 border-accent/40 text-accent"
+                                  : "bg-panel border-border text-text-dim hover:border-accent/30"
+                              }`}
+                            >
+                              {emoji} {count}
+                            </button>
+                          ))}
+                        </div>
+                      ) : null;
+                    })()}
+
                     {/* Hover actions */}
                     <div className={`flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity ${own ? "flex-row-reverse" : ""}`}>
                       <button onClick={() => setReplyTo(msg)}
                         className="p-1 rounded-lg text-text-dim hover:text-text hover:bg-panel transition-all">
                         <Reply size={11} />
                       </button>
+                      <div className="relative">
+                        <button
+                          onClick={() => setShowEmojiPicker(showEmojiPicker === msg.id ? null : msg.id)}
+                          className="p-1 rounded-lg text-text-dim hover:text-text hover:bg-panel transition-all"
+                        >
+                          <Smile size={11} />
+                        </button>
+                        {showEmojiPicker === msg.id && (
+                          <div className={`absolute bottom-7 ${own ? "right-0" : "left-0"} bg-panel border border-border rounded-xl p-2 flex gap-1.5 z-10 shadow-lg`}>
+                            {["👍","❤️","😂","😮","😢","🔥"].map(emoji => (
+                              <button key={emoji} onClick={() => toggleReaction(msg.id, emoji)}
+                                className="text-base hover:scale-125 transition-transform">
+                                {emoji}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       {own && (
                         <>
                           <button onClick={() => { setEditingMsg(msg); setInput(msg.content); }}
@@ -529,6 +686,24 @@ export default function ChatRoomPage() {
           </aside>
         )}
       </div>
+
+      {showInvite && (
+        <InviteMemberModal
+          roomId={roomId}
+          currentUserId={currentUser?.id || ""}
+          onClose={() => setShowInvite(false)}
+          onInvited={() => {
+            setShowInvite(false);
+            supabase
+              .from("room_members")
+              .select("user_id, profiles(id, username, email, status, avatar_url)")
+              .eq("room_id", roomId)
+              .then(({ data }) => {
+                if (data) setMembers(data.map((m: { profiles: unknown }) => m.profiles).filter(Boolean) as User[]);
+              });
+          }}
+        />
+      )}
     </div>
   );
 }

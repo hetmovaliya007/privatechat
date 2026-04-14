@@ -18,6 +18,7 @@ export default function SignupPage() {
     if (!username || !email || !password) return toast.error("Fill all fields");
     if (password.length < 6) return toast.error("Password must be 6+ characters");
     if (username.length < 3) return toast.error("Username must be 3+ characters");
+    if (!/^[a-zA-Z0-9_]+$/.test(username)) return toast.error("Username mein sirf letters, numbers aur _ allowed hain");
 
     setLoading(true);
     try {
@@ -65,9 +66,9 @@ export default function SignupPage() {
             <User size={15} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-text-dim" />
             <input
               type="text"
-              placeholder="Username"
+              placeholder="Username (letters, numbers, _)"
               value={form.username}
-              onChange={(e) => setForm({ ...form, username: e.target.value })}
+              onChange={(e) => setForm({ ...form, username: e.target.value.replace(/[^a-zA-Z0-9_]/g, "") })}
               className="w-full bg-surface border border-border rounded-xl pl-10 pr-4 py-3 text-text text-sm placeholder:text-muted focus:border-accent/50 transition-colors"
             />
           </div>

@@ -19,6 +19,8 @@ export default function CreateRoomModal({ userId, onClose, onCreated }: Props) {
 
   const createGroup = async () => {
     if (!name.trim()) return toast.error("Room name required");
+    if (!/^[a-zA-Z0-9_]+$/.test(name.trim())) return toast.error("Room name mein sirf letters, numbers aur _ allowed hain");
+    if (name.trim().length < 3) return toast.error("Room name 3+ characters hona chahiye");
     setLoading(true);
     try {
       const { data: room, error } = await supabase
@@ -121,9 +123,9 @@ export default function CreateRoomModal({ userId, onClose, onCreated }: Props) {
                 <Hash size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-dim" />
                 <input
                   type="text"
-                  placeholder="general"
+                  placeholder="general (letters, numbers, _)"
                   value={name}
-                  onChange={(e) => setName(e.target.value)}
+                  onChange={(e) => setName(e.target.value.replace(/[^a-zA-Z0-9_]/g, ""))}
                   className="w-full bg-void border border-border rounded-xl pl-8 pr-4 py-2.5 text-text text-sm placeholder:text-muted focus:border-accent/50 transition-colors"
                 />
               </div>

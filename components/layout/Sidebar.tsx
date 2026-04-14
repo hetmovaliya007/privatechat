@@ -4,7 +4,7 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   MessageSquare, Plus, Search, LogOut, Settings,
-  Hash, Lock, User as UserIcon, Shield, X
+  Hash, Lock, User as UserIcon, Shield, X, DoorOpen
 } from "lucide-react";
 import { supabase } from "@/lib/supabase";
 import type { User, Room } from "@/types";
@@ -24,6 +24,7 @@ export default function Sidebar({ user, rooms, onRoomsUpdate, isOpen = true, onC
   const router = useRouter();
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
+  const [leavingRoom, setLeavingRoom] = useState<string | null>(null);
 
   const filtered = rooms.filter(r =>
     r.name.toLowerCase().includes(search.toLowerCase())
@@ -34,6 +35,18 @@ export default function Sidebar({ user, rooms, onRoomsUpdate, isOpen = true, onC
     await supabase.auth.signOut();
     toast.success("Signed out");
     router.push("/");
+  };
+
+  const leaveRoom = async (roomId: string, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!confirm("Leave this room?")) return;
+    setLeavingRoom(roomId);
+    await supabase.from("room_members").delete().eq("room_id", roomId).eq("user_id", user?.id || "");
+    toast.success("Left room");
+    if (pathname === `/chat/${roomId}`) router.push("/chat");
+    onRoomsUpdate();
+    setLeavingRoom(null);
   };
 
   return (
@@ -103,10 +116,11 @@ export default function Sidebar({ user, rooms, onRoomsUpdate, isOpen = true, onC
             ) : (
               filtered.map((room) => {
                 const active = pathname === `/chat/${room.id}`;
+                const unread = room.unread_count ?? 0;
                 return (
                   <Link key={room.id} href={`/chat/${room.id}`}
                     onClick={onClose}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all group ${
+                    className={`group flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all ${
                       active
                         ? "bg-accent/15 border border-accent/20 text-text"
                         : "hover:bg-panel text-text-dim hover:text-text"
@@ -121,11 +135,32 @@ export default function Sidebar({ user, rooms, onRoomsUpdate, isOpen = true, onC
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium truncate">{room.name}</p>
-                      {room.type === "group" && (
-                        <p className="text-[10px] text-text-dim">Group</p>
+                      <div className="flex items-center justify-between gap-1">
+                        <p className="text-xs font-medium truncate">{room.name}</p>
+                        {unread > 0 && !active && (
+                          <span className="shrink-0 min-w-[18px] h-[18px] px-1 rounded-full bg-accent text-white text-[10px] font-bold flex items-center justify-center">
+                            {unread > 99 ? "99+" : unread}
+                          </span>
+                        )}
+                      </div>
+                      {room.last_message && (
+                        <p className="text-[10px] text-text-dim truncate">
+                          {room.last_message.sender?.username}: {
+                            room.last_message.type === "text"
+                              ? room.last_message.content
+                              : `[${room.last_message.type}]`
+                          }
+                        </p>
                       )}
                     </div>
+                    <button
+                      onClick={(e) => leaveRoom(room.id, e)}
+                      disabled={leavingRoom === room.id}
+                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-dim hover:text-accent-2 hover:bg-accent-2/10 transition-all shrink-0"
+                      title="Leave room"
+                    >
+                      <DoorOpen size={11} />
+                    </button>
                   </Link>
                 );
               })
