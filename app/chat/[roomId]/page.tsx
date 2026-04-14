@@ -40,10 +40,18 @@ export default function ChatRoomPage() {
   const [pinnedMessages, setPinnedMessages] = useState<Message[]>([]);
   const [showPinned, setShowPinned] = useState(false);
   const oldestMsgRef = useRef<string | null>(null);
+  const messagesRef2 = useRef<Message[]>([]);
+  const membersRef = useRef<User[]>([]);
+  const currentUserRef = useRef<User | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync refs with state
+  useEffect(() => { messagesRef2.current = messages; }, [messages]);
+  useEffect(() => { membersRef.current = members; }, [members]);
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
 
   const scrollToBottom = useCallback((smooth = true) => {
     bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
@@ -150,6 +158,12 @@ export default function ChatRoomPage() {
     setShowEmojiPicker(null);
   };
 
+  const sendBrowserNotification = useCallback((senderName: string, content: string) => {
+    if (Notification.permission === "granted" && document.hidden) {
+      new Notification(`${senderName} — VoidChat`, { body: content, icon: "/favicon.ico" });
+    }
+  }, []);
+
   // Real-time subscriptions
   useEffect(() => {
     // Messages channel
@@ -163,14 +177,9 @@ export default function ChatRoomPage() {
       }, async (payload) => {
         const newMsg = payload.new as Message;
 
-        // Use cached members instead of extra DB call
-        const sender = members.find(m => m.id === newMsg.sender_id) || currentUser || null;
-
-        // reply_message from existing messages cache
-        let reply_message: Message | undefined;
-        if (newMsg.reply_to) {
-          reply_message = messages.find(m => m.id === newMsg.reply_to);
-        }
+        // Use refs — always fresh data, no stale closure
+        const sender = membersRef.current.find(m => m.id === newMsg.sender_id) || currentUserRef.current || null;
+        const reply_message = newMsg.reply_to ? messagesRef2.current.find(m => m.id === newMsg.reply_to) : undefined;
 
         const fullMsg: Message = {
           ...newMsg,
@@ -179,11 +188,15 @@ export default function ChatRoomPage() {
           reply_message,
         };
         setMessages(prev => {
-          if (prev.find(m => m.id === fullMsg.id)) return prev;
+          if (prev.find(m => m.id === fullMsg.id || m.optimistic)) {
+            // Replace optimistic message if exists
+            const hasOptimistic = prev.find(m => m.optimistic && m.sender_id === fullMsg.sender_id);
+            if (hasOptimistic) return prev.map(m => m.optimistic && m.sender_id === fullMsg.sender_id ? fullMsg : m);
+            if (prev.find(m => m.id === fullMsg.id)) return prev;
+          }
           return [...prev, fullMsg];
         });
-        // Browser notification
-        if (fullMsg.sender_id !== currentUser?.id) {
+        if (fullMsg.sender_id !== currentUserRef.current?.id) {
           sendBrowserNotification(fullMsg.sender?.username || "Someone", fullMsg.type === "text" ? fullMsg.content : `[${fullMsg.type}]`);
         }
         scrollToBottom();
@@ -235,7 +248,7 @@ export default function ChatRoomPage() {
       supabase.removeChannel(typingChannel);
       supabase.removeChannel(rxnChannel);
     };
-  }, [roomId, currentUser?.id, scrollToBottom]);
+  }, [roomId, scrollToBottom, sendBrowserNotification]);
 
   const sendTyping = useCallback(async () => {
     if (!currentUser) return;
@@ -320,12 +333,6 @@ export default function ChatRoomPage() {
     setPinnedMessages(prev => newPinned ? [...prev, { ...msg, is_pinned: true }] : prev.filter(p => p.id !== msg.id));
     toast.success(newPinned ? "Message pinned!" : "Message unpinned");
   };
-
-  const sendBrowserNotification = useCallback((senderName: string, content: string) => {
-    if (Notification.permission === "granted" && document.hidden) {
-      new Notification(`${senderName} — VoidChat`, { body: content, icon: "/favicon.ico" });
-    }
-  }, []);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
