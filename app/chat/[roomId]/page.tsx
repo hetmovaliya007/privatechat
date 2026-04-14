@@ -154,17 +154,16 @@ export default function ChatRoomPage() {
         filter: `room_id=eq.${roomId}`,
       }, async (payload) => {
         const newMsg = payload.new as Message;
-        const { data: sender } = await supabase.from("profiles").select("*").eq("id", newMsg.sender_id).single();
-        // Fetch reply_message if needed
+
+        // Use cached members instead of extra DB call
+        const sender = members.find(m => m.id === newMsg.sender_id) || currentUser || null;
+
+        // reply_message from existing messages cache
         let reply_message: Message | undefined;
         if (newMsg.reply_to) {
-          const { data: rm } = await supabase
-            .from("messages")
-            .select("*, sender:profiles(id, username, email, status, avatar_url)")
-            .eq("id", newMsg.reply_to)
-            .single();
-          if (rm) reply_message = { ...rm, content: rm.type === "text" ? decryptMessage(rm.content) : rm.content };
+          reply_message = messages.find(m => m.id === newMsg.reply_to);
         }
+
         const fullMsg: Message = {
           ...newMsg,
           content: newMsg.type === "text" ? decryptMessage(newMsg.content) : newMsg.content,
