@@ -374,9 +374,10 @@ export default function ChatRoomPage() {
           : m
         ));
       }
-    } catch {
+    } catch (err: unknown) {
       setMessages(prev => prev.filter(m => m.id !== tempId));
-      toast.error("Failed to send message");
+      const msg = err instanceof Error ? err.message : (err as { message?: string })?.message || "Unknown error";
+      toast.error(`Send failed: ${msg}`);
     } finally {
       setSending(false);
     }
