@@ -200,9 +200,8 @@ export default function ChatRoomPage() {
 
   // Real-time subscriptions
   useEffect(() => {
-    // Messages channel
     const msgChannel = supabase
-      .channel(`room-messages-${roomId}`)
+      .channel(`room-${roomId}`, { config: { broadcast: { self: false } } })
       .on("postgres_changes", {
         event: "INSERT",
         schema: "public",
@@ -211,10 +210,25 @@ export default function ChatRoomPage() {
       }, async (payload) => {
         const newMsg = payload.new as Message;
 
-        // Use refs — always fresh data, no stale closure
-        let sender = membersRef.current.find(m => m.id === newMsg.sender_id) || (currentUserRef.current?.id === newMsg.sender_id ? currentUserRef.current : null);
+        // Skip own optimistic — already shown
+        if (newMsg.sender_id === currentUserRef.current?.id) {
+          // Replace optimistic with real DB message
+          setMessages(prev => {
+            const hasOptimistic = prev.find(m => m.optimistic && m.sender_id === newMsg.sender_id);
+            if (hasOptimistic) {
+              return prev.map(m => m.optimistic && m.sender_id === newMsg.sender_id
+                ? { ...newMsg, content: newMsg.type === "text" ? decryptMessage(newMsg.content) : newMsg.content, sender: currentUserRef.current as User }
+                : m
+              );
+            }
+            if (prev.find(m => m.id === newMsg.id)) return prev;
+            return [...prev, { ...newMsg, content: newMsg.type === "text" ? decryptMessage(newMsg.content) : newMsg.content, sender: currentUserRef.current as User }];
+          });
+          return;
+        }
 
-        // New friend ka message — sender membersRef mein nahi hoga, DB se fetch karo
+        // Message from someone else — fetch sender if needed
+        let sender = membersRef.current.find(m => m.id === newMsg.sender_id) || null;
         if (!sender) {
           const { data: profile } = await supabase.from("profiles").select("*").eq("id", newMsg.sender_id).single();
           if (profile) {
@@ -225,28 +239,19 @@ export default function ChatRoomPage() {
         }
 
         const reply_message = newMsg.reply_to ? messagesRef2.current.find(m => m.id === newMsg.reply_to) : undefined;
-
         const fullMsg: Message = {
           ...newMsg,
           content: newMsg.type === "text" ? decryptMessage(newMsg.content) : newMsg.content,
           sender: sender as User,
           reply_message,
         };
+
         setMessages(prev => {
-          // Already exists — skip
           if (prev.find(m => m.id === fullMsg.id)) return prev;
-          // Replace own optimistic message with real one
-          const ownOptimistic = prev.find(m => m.optimistic && m.sender_id === fullMsg.sender_id);
-          if (ownOptimistic && fullMsg.sender_id === currentUserRef.current?.id) {
-            return prev.map(m => (m.optimistic && m.sender_id === fullMsg.sender_id) ? fullMsg : m);
-          }
-          // New message from anyone else — append immediately
           return [...prev, fullMsg];
         });
-        if (fullMsg.sender_id !== currentUserRef.current?.id) {
-          sendBrowserNotification(fullMsg.sender?.username || "Someone", fullMsg.type === "text" ? fullMsg.content : `[${fullMsg.type}]`);
-        }
-        // Sirf tab auto-scroll karo jab user bottom ke paas ho (Instagram behavior)
+
+        sendBrowserNotification(fullMsg.sender?.username || "Someone", fullMsg.type === "text" ? fullMsg.content : `[${fullMsg.type}]`);
         if (isNearBottom()) scrollToBottom();
       })
       .on("postgres_changes", {
@@ -266,7 +271,12 @@ export default function ChatRoomPage() {
           ));
         }
       })
-      .subscribe();
+      .subscribe((status) => {
+        // Agar subscription fail ho toh reconnect
+        if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+          setTimeout(() => msgChannel.subscribe(), 2000);
+        }
+      });
 
     // Typing channel
     const typingChannel = supabase.channel(`typing-${roomId}`);

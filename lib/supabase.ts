@@ -8,5 +8,10 @@ export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
     params: {
       eventsPerSecond: 100,
     },
+    timeout: 30000,
+  },
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
   },
 });
