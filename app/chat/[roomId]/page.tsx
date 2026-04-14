@@ -314,28 +314,31 @@ export default function ChatRoomPage() {
 
   const sendMessage = async () => {
     if ((!input.trim() && !editingMsg) || sending || !currentUser) return;
-    setSending(true);
 
     if (editingMsg) {
       const encrypted = encryptMessage(input.trim());
       setMessages(prev => prev.map(m => m.id === editingMsg.id ? { ...m, content: input.trim(), is_edited: true } : m));
       setEditingMsg(null);
       setInput("");
-      setSending(false);
       await supabase.from("messages").update({ content: encrypted, is_edited: true }).eq("id", editingMsg.id);
       return;
     }
 
-    // Optimistic UI — show instantly
+    const msgText = input.trim();
+    if (!msgText) return;
+
     const tempId = `temp-${Date.now()}`;
-    const reply_message = replyTo ? messages.find(m => m.id === replyTo.id) : undefined;
+    const currentReplyTo = replyTo;
+    const reply_message = currentReplyTo ? messagesRef2.current.find(m => m.id === currentReplyTo.id) : undefined;
+
+    // Optimistic UI
     const optimisticMsg: Message = {
       id: tempId,
       room_id: roomId,
       sender_id: currentUser.id,
-      content: input.trim(),
+      content: msgText,
       type: "text",
-      reply_to: replyTo?.id,
+      reply_to: currentReplyTo?.id,
       reply_message,
       is_edited: false,
       is_deleted: false,
@@ -343,34 +346,39 @@ export default function ChatRoomPage() {
       sender: currentUser,
       optimistic: true,
     };
+
     setMessages(prev => [...prev, optimisticMsg]);
-    scrollToBottom();
-    const msgText = input.trim();
     setInput("");
     setReplyTo(null);
-    setSending(false);
-    // Focus wapas do — keyboard band na ho
+    scrollToBottom();
     setTimeout(() => inputRef.current?.focus(), 0);
 
     try {
+      setSending(true);
       const encrypted = encryptMessage(msgText);
-      const { data: inserted } = await supabase.from("messages").insert({
+      const { data: inserted, error } = await supabase.from("messages").insert({
         room_id: roomId,
         sender_id: currentUser.id,
         content: encrypted,
         type: "text",
-        reply_to: replyTo?.id || null,
+        reply_to: currentReplyTo?.id || null,
         is_edited: false,
         is_deleted: false,
       }).select().single();
-      // Replace optimistic with real
+
+      if (error) throw error;
+
       if (inserted) {
-        setMessages(prev => prev.map(m => m.id === tempId ? { ...inserted, content: msgText, sender: currentUser, reply_message } : m));
+        setMessages(prev => prev.map(m => m.id === tempId
+          ? { ...inserted, content: msgText, sender: currentUser, reply_message }
+          : m
+        ));
       }
     } catch {
-      // Remove optimistic on failure
       setMessages(prev => prev.filter(m => m.id !== tempId));
       toast.error("Failed to send message");
+    } finally {
+      setSending(false);
     }
   };
 
