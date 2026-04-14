@@ -76,14 +76,21 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="flex-1 overflow-y-auto bg-void p-4 sm:p-6">
-      <div className="max-w-lg mx-auto">
-        <button onClick={() => router.back()} className="flex items-center gap-2 text-text-dim hover:text-text transition-colors mb-6 text-sm">
-          <ArrowLeft size={15} /> Back to Chat
+    <div className="flex-1 overflow-y-auto bg-void">
+      {/* Top navigation bar */}
+      <div className="sticky top-0 z-10 flex items-center justify-between px-4 py-3 border-b border-border glass">
+        <button onClick={() => router.back()} className="flex items-center gap-2 text-text-dim hover:text-text transition-colors text-sm">
+          <ArrowLeft size={15} /> Back
         </button>
+        <span className="font-semibold text-text text-sm">Settings</span>
+        <div className="flex items-center gap-1.5">
+          <Shield size={10} className="text-accent" />
+          <span className="text-[10px] text-accent font-mono">encrypted</span>
+        </div>
+      </div>
 
-        <h1 className="text-2xl font-bold text-text mb-1">Settings</h1>
-        <p className="text-text-dim text-sm mb-6">Manage your VoidChat account</p>
+      <div className="p-4 sm:p-6">
+      <div className="max-w-lg mx-auto">
 
         {/* Avatar + Profile */}
         <div className="glass rounded-2xl p-6 mb-4">
@@ -207,6 +214,7 @@ export default function SettingsPage() {
             ))}
           </div>
         </div>
+      </div>
       </div>
     </div>
   );

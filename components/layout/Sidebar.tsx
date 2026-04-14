@@ -61,7 +61,7 @@ export default function Sidebar({ user, rooms, onRoomsUpdate, isOpen = true, onC
         w-72 flex flex-col bg-surface border-r border-border shrink-0
         transform transition-transform duration-300 ease-in-out
         ${isOpen ? "translate-x-0" : "-translate-x-full"}
-        md:translate-x-0
+        md:translate-x-0 md:pt-0 pt-12
       `}>
         {/* Header */}
         <div className="flex items-center justify-between px-5 py-4 border-b border-border">
@@ -119,7 +119,7 @@ export default function Sidebar({ user, rooms, onRoomsUpdate, isOpen = true, onC
                 const unread = room.unread_count ?? 0;
                 return (
                   <Link key={room.id} href={`/chat/${room.id}`}
-                    onClick={onClose}
+                    onClick={() => { onClose?.(); }}
                     className={`group flex items-center gap-2.5 px-3 py-2 rounded-lg transition-all ${
                       active
                         ? "bg-accent/15 border border-accent/20 text-text"
@@ -156,7 +156,7 @@ export default function Sidebar({ user, rooms, onRoomsUpdate, isOpen = true, onC
                     <button
                       onClick={(e) => leaveRoom(room.id, e)}
                       disabled={leavingRoom === room.id}
-                      className="opacity-0 group-hover:opacity-100 p-1 rounded text-text-dim hover:text-accent-2 hover:bg-accent-2/10 transition-all shrink-0"
+                      className="hidden group-hover:flex p-1 rounded text-text-dim hover:text-accent-2 hover:bg-accent-2/10 transition-all shrink-0"
                       title="Leave room"
                     >
                       <DoorOpen size={11} />

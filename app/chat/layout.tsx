@@ -4,7 +4,8 @@ import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import Sidebar from "@/components/layout/Sidebar";
 import type { User, Room } from "@/types";
-import { Menu } from "lucide-react";
+import { Menu, Settings } from "lucide-react";
+import Link from "next/link";
 
 export default function ChatLayout({ children }: { children: React.ReactNode }) {
   const router = useRouter();
@@ -21,28 +22,29 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
 
     if (!data) return;
     const roomList = data.map((d: { rooms: unknown }) => d.rooms).filter(Boolean) as Room[];
+    if (roomList.length === 0) { setRooms([]); return; }
 
-    // Fetch last message + unread count for each room
-    const enriched = await Promise.all(
-      roomList.map(async (room) => {
-        const { data: lastMsgs } = await supabase
-          .from("messages")
-          .select("id, content, type, sender_id, created_at, sender:profiles(id, username)")
-          .eq("room_id", room.id)
-          .eq("is_deleted", false)
-          .order("created_at", { ascending: false })
-          .limit(1);
+    // Single query for all last messages (no N+1)
+    const roomIds = roomList.map(r => r.id);
+    const { data: allMsgs } = await supabase
+      .from("messages")
+      .select("id, content, type, sender_id, room_id, created_at, sender:profiles(id, username)")
+      .in("room_id", roomIds)
+      .eq("is_deleted", false)
+      .order("created_at", { ascending: false });
 
-        const lastMsg = lastMsgs?.[0];
-        return {
-          ...room,
-          last_message: lastMsg ?? undefined,
-          unread_count: 0, // unread tracking requires read receipts table; default 0
-        } as Room;
-      })
-    );
+    // Pick last message per room
+    const lastMsgMap: Record<string, typeof allMsgs extends (infer T)[] | null ? T : never> = {};
+    allMsgs?.forEach((msg) => {
+      if (!lastMsgMap[msg.room_id]) lastMsgMap[msg.room_id] = msg;
+    });
 
-    // Sort by most recent message
+    const enriched = roomList.map(room => ({
+      ...room,
+      last_message: lastMsgMap[room.id] ?? undefined,
+      unread_count: 0,
+    } as Room));
+
     enriched.sort((a, b) => {
       const aTime = a.last_message?.created_at ?? a.created_at;
       const bTime = b.last_message?.created_at ?? b.created_at;
@@ -82,6 +84,21 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
     return () => window.removeEventListener("beforeunload", handleUnload);
   }, [router, fetchRooms]);
 
+  // Realtime: sidebar rooms update when new message arrives
+  useEffect(() => {
+    if (!user) return;
+    const channel = supabase
+      .channel("sidebar-messages")
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, () => {
+        fetchRooms(user.id);
+      })
+      .on("postgres_changes", { event: "INSERT", schema: "public", table: "room_members", filter: `user_id=eq.${user.id}` }, () => {
+        fetchRooms(user.id);
+      })
+      .subscribe();
+    return () => { supabase.removeChannel(channel); };
+  }, [user, fetchRooms]);
+
   if (loading) {
     return (
       <div className="h-screen bg-void flex items-center justify-center">
@@ -103,7 +120,10 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
         >
           <Menu size={18} />
         </button>
-        <span className="font-bold text-sm text-text">VoidChat</span>
+        <span className="font-bold text-sm text-text flex-1">VoidChat</span>
+        <Link href="/chat/settings" className="p-2 rounded-lg text-text-dim hover:text-text hover:bg-panel transition-colors">
+          <Settings size={18} />
+        </Link>
       </div>
 
       <Sidebar

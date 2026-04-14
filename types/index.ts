@@ -5,6 +5,7 @@ export interface User {
   avatar_url?: string;
   bio?: string;
   status: "online" | "offline" | "away";
+  last_seen?: string;
   created_at: string;
 }
 
@@ -36,7 +37,7 @@ export interface Message {
   room_id: string;
   sender_id: string;
   content: string;
-  type: "text" | "image" | "file" | "system";
+  type: "text" | "image" | "file" | "system" | "voice";
   file_url?: string;
   file_name?: string;
   file_size?: number;
@@ -62,4 +63,11 @@ export interface TypingIndicator {
   room_id: string;
   user_id: string;
   username: string;
+}
+
+export interface ReadReceipt {
+  id: string;
+  room_id: string;
+  user_id: string;
+  last_read_at: string;
 }

@@ -14,6 +14,18 @@
   --text-dim: #7878a0;
 }
 
+[data-theme="light"] {
+  --void: #f0f0f7;
+  --surface: #ffffff;
+  --panel: #f5f5fc;
+  --border: #ddddf0;
+  --accent: #6c63ff;
+  --accent-2: #ff6584;
+  --muted: #b0b0cc;
+  --text: #1a1a2e;
+  --text-dim: #6060a0;
+}
+
 * {
   box-sizing: border-box;
   margin: 0;
@@ -30,6 +42,11 @@ html, body {
   .h-screen-mobile {
     height: -webkit-fill-available;
   }
+}
+
+a, button {
+  touch-action: manipulation;
+  -webkit-tap-highlight-color: transparent;
 }
 
 .chat-container {
@@ -85,13 +102,54 @@ html, body {
 }
 
 .message-bubble-own {
-  background: linear-gradient(135deg, #6c63ff20, #6c63ff10);
-  border: 1px solid #6c63ff30;
+  background: linear-gradient(135deg, #6c63ff25, #6c63ff12);
+  border: 1px solid #6c63ff35;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+[data-theme="light"] .message-bubble-own {
+  background: linear-gradient(135deg, #6c63ff22, #6c63ff10);
+  border: 1px solid #6c63ff40;
 }
 
 .message-bubble-other {
   background: var(--panel);
   border: 1px solid var(--border);
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.glass {
+  background: rgba(13, 13, 20, 0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+[data-theme="light"] .glass {
+  background: rgba(255,255,255,0.85);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+}
+
+/* Image lightbox */
+.lightbox-overlay {
+  animation: fadeIn 0.15s ease;
+}
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* Voice recording pulse */
+@keyframes recordPulse {
+  0%, 100% { box-shadow: 0 0 0 0 #ff658460; }
+  50% { box-shadow: 0 0 0 8px #ff658400; }
+}
+.recording-pulse {
+  animation: recordPulse 1s infinite;
 }
 
 .typing-dot {

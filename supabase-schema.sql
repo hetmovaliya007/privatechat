@@ -224,15 +224,31 @@ CREATE INDEX IF NOT EXISTS idx_room_members_user_id ON public.room_members(user_
 CREATE INDEX IF NOT EXISTS idx_room_members_room_id ON public.room_members(room_id);
 CREATE INDEX IF NOT EXISTS idx_reactions_message_id ON public.reactions(message_id);
 
--- AUTO CREATE PROFILE ON SIGNUP
+-- AUTO CREATE PROFILE ON SIGNUP (Email + Google OAuth)
 CREATE OR REPLACE FUNCTION public.handle_new_user()
 RETURNS TRIGGER AS $$
+DECLARE
+  base_username TEXT;
+  final_username TEXT;
+  counter INT := 0;
 BEGIN
-  INSERT INTO public.profiles (id, username, email, status)
+  base_username := COALESCE(
+    NEW.raw_user_meta_data->>'username',
+    regexp_replace(split_part(COALESCE(NEW.email, NEW.raw_user_meta_data->>'email', 'user'), '@', 1), '[^a-zA-Z0-9_]', '', 'g')
+  );
+  IF length(base_username) < 3 THEN base_username := 'user'; END IF;
+  final_username := base_username;
+  -- Username unique banana
+  WHILE EXISTS (SELECT 1 FROM public.profiles WHERE username = final_username) LOOP
+    counter := counter + 1;
+    final_username := base_username || counter::TEXT;
+  END LOOP;
+  INSERT INTO public.profiles (id, username, email, avatar_url, status)
   VALUES (
     NEW.id,
-    COALESCE(NEW.raw_user_meta_data->>'username', split_part(NEW.email, '@', 1)),
-    NEW.email,
+    final_username,
+    COALESCE(NEW.email, NEW.raw_user_meta_data->>'email', ''),
+    NEW.raw_user_meta_data->>'avatar_url',
     'online'
   ) ON CONFLICT (id) DO NOTHING;
   RETURN NEW;

@@ -6,8 +6,9 @@ import { encryptMessage, decryptMessage } from "@/lib/encryption";
 import {
   Hash, Lock, Users, Paperclip, Smile, Send,
   X, Reply, Edit2, Trash2,
-  Shield, ChevronDown, UserPlus, ChevronUp, Copy, Search, Pin
+  Shield, ChevronDown, UserPlus, ChevronUp, Copy, Search, Pin, Settings
 } from "lucide-react";
+import Link from "next/link";
 import toast from "react-hot-toast";
 import type { Message, Room, User, Reaction } from "@/types";
 import InviteMemberModal from "@/components/chat/InviteMemberModal";
@@ -39,23 +40,56 @@ export default function ChatRoomPage() {
   const [showSearch, setShowSearch] = useState(false);
   const [pinnedMessages, setPinnedMessages] = useState<Message[]>([]);
   const [showPinned, setShowPinned] = useState(false);
+  const [contextMenu, setContextMenu] = useState<Message | null>(null);
+  const longPressTimer = useRef<NodeJS.Timeout | null>(null);
   const oldestMsgRef = useRef<string | null>(null);
   const messagesRef2 = useRef<Message[]>([]);
   const membersRef = useRef<User[]>([]);
   const currentUserRef = useRef<User | null>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
   const typingTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Sync refs with state
-  useEffect(() => { messagesRef2.current = messages; }, [messages]);
-  useEffect(() => { membersRef.current = members; }, [members]);
-  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
+  const isNearBottom = useCallback(() => {
+    if (!messagesRef.current) return true;
+    const { scrollTop, scrollHeight, clientHeight } = messagesRef.current;
+    return scrollHeight - scrollTop - clientHeight < 120;
+  }, []);
 
   const scrollToBottom = useCallback((smooth = true) => {
     bottomRef.current?.scrollIntoView({ behavior: smooth ? "smooth" : "auto" });
   }, []);
+
+  // Instagram-style: keyboard open hone par input upar uthta hai, messages scroll hote hain
+  useEffect(() => {
+    const viewport = window.visualViewport;
+    if (!viewport) return;
+    const handleResize = () => {
+      // Input box ko keyboard ke upar rakho
+      const offsetFromBottom = window.innerHeight - viewport.height - viewport.offsetTop;
+      const inputArea = document.getElementById("chat-input-area");
+      if (inputArea) {
+        inputArea.style.paddingBottom = offsetFromBottom > 0 ? `${offsetFromBottom}px` : "";
+      }
+      // Agar user bottom ke paas tha toh scroll karo
+      if (isNearBottom()) {
+        setTimeout(() => scrollToBottom(false), 50);
+      }
+    };
+    viewport.addEventListener("resize", handleResize);
+    viewport.addEventListener("scroll", handleResize);
+    return () => {
+      viewport.removeEventListener("resize", handleResize);
+      viewport.removeEventListener("scroll", handleResize);
+    };
+  }, [scrollToBottom, isNearBottom]);
+
+  // Sync refs with state
+  useEffect(() => { messagesRef2.current = messages; }, [messages]);
+  useEffect(() => { membersRef.current = members; }, [members]);
+  useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
 
   // Fetch initial data
   useEffect(() => {
@@ -178,7 +212,18 @@ export default function ChatRoomPage() {
         const newMsg = payload.new as Message;
 
         // Use refs — always fresh data, no stale closure
-        const sender = membersRef.current.find(m => m.id === newMsg.sender_id) || currentUserRef.current || null;
+        let sender = membersRef.current.find(m => m.id === newMsg.sender_id) || (currentUserRef.current?.id === newMsg.sender_id ? currentUserRef.current : null);
+
+        // New friend ka message — sender membersRef mein nahi hoga, DB se fetch karo
+        if (!sender) {
+          const { data: profile } = await supabase.from("profiles").select("*").eq("id", newMsg.sender_id).single();
+          if (profile) {
+            sender = profile as User;
+            membersRef.current = [...membersRef.current, sender];
+            setMembers(prev => prev.find(m => m.id === sender!.id) ? prev : [...prev, sender!]);
+          }
+        }
+
         const reply_message = newMsg.reply_to ? messagesRef2.current.find(m => m.id === newMsg.reply_to) : undefined;
 
         const fullMsg: Message = {
@@ -188,18 +233,21 @@ export default function ChatRoomPage() {
           reply_message,
         };
         setMessages(prev => {
-          if (prev.find(m => m.id === fullMsg.id || m.optimistic)) {
-            // Replace optimistic message if exists
-            const hasOptimistic = prev.find(m => m.optimistic && m.sender_id === fullMsg.sender_id);
-            if (hasOptimistic) return prev.map(m => m.optimistic && m.sender_id === fullMsg.sender_id ? fullMsg : m);
-            if (prev.find(m => m.id === fullMsg.id)) return prev;
+          // Already exists — skip
+          if (prev.find(m => m.id === fullMsg.id)) return prev;
+          // Replace own optimistic message with real one
+          const ownOptimistic = prev.find(m => m.optimistic && m.sender_id === fullMsg.sender_id);
+          if (ownOptimistic && fullMsg.sender_id === currentUserRef.current?.id) {
+            return prev.map(m => (m.optimistic && m.sender_id === fullMsg.sender_id) ? fullMsg : m);
           }
+          // New message from anyone else — append immediately
           return [...prev, fullMsg];
         });
         if (fullMsg.sender_id !== currentUserRef.current?.id) {
           sendBrowserNotification(fullMsg.sender?.username || "Someone", fullMsg.type === "text" ? fullMsg.content : `[${fullMsg.type}]`);
         }
-        scrollToBottom();
+        // Sirf tab auto-scroll karo jab user bottom ke paas ho (Instagram behavior)
+        if (isNearBottom()) scrollToBottom();
       })
       .on("postgres_changes", {
         event: "UPDATE",
@@ -208,11 +256,15 @@ export default function ChatRoomPage() {
         filter: `room_id=eq.${roomId}`,
       }, (payload) => {
         const updated = payload.new as Message;
-        setMessages(prev => prev.map(m =>
-          m.id === updated.id
-            ? { ...m, content: updated.type === "text" ? decryptMessage(updated.content) : updated.content, is_edited: updated.is_edited, is_deleted: updated.is_deleted }
-            : m
-        ).filter(m => !m.is_deleted));
+        if (updated.is_deleted) {
+          setMessages(prev => prev.filter(m => m.id !== updated.id));
+        } else {
+          setMessages(prev => prev.map(m =>
+            m.id === updated.id
+              ? { ...m, content: updated.type === "text" ? decryptMessage(updated.content) : updated.content, is_edited: updated.is_edited }
+              : m
+          ));
+        }
       })
       .subscribe();
 
@@ -220,7 +272,7 @@ export default function ChatRoomPage() {
     const typingChannel = supabase.channel(`typing-${roomId}`);
     typingChannel
       .on("broadcast", { event: "typing" }, ({ payload }) => {
-        if (payload.userId !== currentUser?.id) {
+        if (payload.userId !== currentUserRef.current?.id) {
           setTypingUsers(prev => {
             if (!prev.includes(payload.username)) return [...prev, payload.username];
             return prev;
@@ -248,17 +300,17 @@ export default function ChatRoomPage() {
       supabase.removeChannel(typingChannel);
       supabase.removeChannel(rxnChannel);
     };
-  }, [roomId, scrollToBottom, sendBrowserNotification]);
+  }, [roomId, scrollToBottom, sendBrowserNotification, isNearBottom]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendTyping = useCallback(async () => {
-    if (!currentUser) return;
+    if (!currentUserRef.current) return;
     if (typingTimeoutRef.current) clearTimeout(typingTimeoutRef.current);
     await supabase.channel(`typing-${roomId}`).send({
       type: "broadcast",
       event: "typing",
-      payload: { userId: currentUser.id, username: currentUser.username },
+      payload: { userId: currentUserRef.current.id, username: currentUserRef.current.username },
     });
-  }, [currentUser, roomId]);
+  }, [roomId]);
 
   const sendMessage = async () => {
     if ((!input.trim() && !editingMsg) || sending || !currentUser) return;
@@ -297,6 +349,8 @@ export default function ChatRoomPage() {
     setInput("");
     setReplyTo(null);
     setSending(false);
+    // Focus wapas do — keyboard band na ho
+    setTimeout(() => inputRef.current?.focus(), 0);
 
     try {
       const encrypted = encryptMessage(msgText);
@@ -369,13 +423,14 @@ export default function ChatRoomPage() {
     }
   };
 
-  const handleScroll = () => {
+  const handleScroll = useCallback(() => {
     if (!messagesRef.current) return;
     const { scrollTop, scrollHeight, clientHeight } = messagesRef.current;
-    setShowScrollBtn(scrollHeight - scrollTop - clientHeight > 200);
-  };
+    const shouldShow = scrollHeight - scrollTop - clientHeight > 200;
+    setShowScrollBtn(prev => prev === shouldShow ? prev : shouldShow);
+  }, []);
 
-  const formatTime = (ts: string) => {
+  const formatTime = useCallback((ts: string) => {
     try {
       const date = new Date(ts);
       const now = new Date();
@@ -401,9 +456,20 @@ export default function ChatRoomPage() {
     } catch {
       return "";
     }
-  };
+  }, []);
 
   const isOwn = (msg: Message) => msg.sender_id === currentUser?.id;
+
+  const handleLongPressStart = (msg: Message) => {
+    longPressTimer.current = setTimeout(() => {
+      setContextMenu(msg);
+      if (navigator.vibrate) navigator.vibrate(30);
+    }, 500);
+  };
+
+  const handleLongPressEnd = () => {
+    if (longPressTimer.current) clearTimeout(longPressTimer.current);
+  };
 
   if (loading) {
     return (
@@ -475,6 +541,9 @@ export default function ChatRoomPage() {
             <Users size={13} />
             <span>{members.length}</span>
           </button>
+          <Link href="/chat/settings" className="hidden md:flex p-1.5 rounded-lg text-text-dim hover:text-text hover:bg-panel transition-all">
+            <Settings size={14} />
+          </Link>
         </div>
       </header>
 
@@ -561,7 +630,16 @@ export default function ChatRoomPage() {
               const showAvatar = !prevMsg || prevMsg.sender_id !== msg.sender_id;
 
               return (
-                <div key={msg.id} className={`group flex gap-2.5 message-enter ${own ? "flex-row-reverse" : ""} ${!showAvatar ? (own ? "mr-10" : "ml-10") : ""}`}>
+                <div
+                  key={msg.id}
+                  className={`group flex gap-2.5 message-enter ${own ? "flex-row-reverse" : ""} ${!showAvatar ? (own ? "mr-10" : "ml-10") : ""}`}
+                  onTouchStart={() => handleLongPressStart(msg)}
+                  onTouchEnd={handleLongPressEnd}
+                  onTouchMove={handleLongPressEnd}
+                  onMouseDown={() => handleLongPressStart(msg)}
+                  onMouseUp={handleLongPressEnd}
+                  onMouseLeave={handleLongPressEnd}
+                >
                   {/* Avatar */}
                   {showAvatar && (
                     <div className="w-8 h-8 rounded-xl bg-accent/20 flex items-center justify-center shrink-0 mt-0.5">
@@ -642,47 +720,7 @@ export default function ChatRoomPage() {
                       ) : null;
                     })()}
 
-                    {/* Hover actions - mobile pe always visible */}
-                    <div className={`flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 touch:opacity-100 transition-opacity ${own ? "flex-row-reverse" : ""}`}>
-                      <button onClick={() => setReplyTo(msg)}
-                        className="p-1 rounded-lg text-text-dim hover:text-text hover:bg-panel transition-all">
-                        <Reply size={11} />
-                      </button>
-                      <button onClick={() => pinMessage(msg)}
-                        className={`p-1 rounded-lg transition-all ${msg.is_pinned ? "text-accent" : "text-text-dim hover:text-text hover:bg-panel"}`}>
-                        <Pin size={11} />
-                      </button>
-                      <div className="relative">
-                        <button
-                          onClick={() => setShowEmojiPicker(showEmojiPicker === msg.id ? null : msg.id)}
-                          className="p-1 rounded-lg text-text-dim hover:text-text hover:bg-panel transition-all"
-                        >
-                          <Smile size={11} />
-                        </button>
-                        {showEmojiPicker === msg.id && (
-                          <div className={`absolute bottom-7 ${own ? "right-0" : "left-0"} bg-panel border border-border rounded-xl p-2 flex gap-1.5 z-10 shadow-lg`}>
-                            {["👍","❤️","😂","😮","😢","🔥"].map(emoji => (
-                              <button key={emoji} onClick={() => toggleReaction(msg.id, emoji)}
-                                className="text-base hover:scale-125 transition-transform">
-                                {emoji}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                      {own && (
-                        <>
-                          <button onClick={() => { setEditingMsg(msg); setInput(msg.content); }}
-                            className="p-1 rounded-lg text-text-dim hover:text-text hover:bg-panel transition-all">
-                            <Edit2 size={11} />
-                          </button>
-                          <button onClick={() => deleteMessage(msg.id)}
-                            className="p-1 rounded-lg text-text-dim hover:text-accent-2 hover:bg-accent-2/10 transition-all">
-                            <Trash2 size={11} />
-                          </button>
-                        </>
-                      )}
-                    </div>
+
                   </div>
                 </div>
               );
@@ -711,7 +749,7 @@ export default function ChatRoomPage() {
           )}
 
           {/* Input area */}
-          <div className="px-4 py-3 border-t border-border shrink-0">
+          <div id="chat-input-area" className="px-4 py-3 border-t border-border shrink-0" style={{ transition: "padding-bottom 0.15s ease" }}>
             {/* Reply bar */}
             {replyTo && (
               <div className="flex items-center justify-between bg-panel border border-border rounded-xl px-3 py-2 mb-2">
@@ -759,10 +797,14 @@ export default function ChatRoomPage() {
               </button>
 
               <textarea
+                ref={inputRef}
                 value={input}
                 onChange={(e) => { setInput(e.target.value); sendTyping(); }}
                 onKeyDown={(e) => {
-                  if (e.key === "Enter" && !e.shiftKey) {
+                  // Desktop: Enter = send, Shift+Enter = newline (Instagram style)
+                  // Mobile: Enter = newline (send button se bhejo)
+                  const isMobile = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+                  if (e.key === "Enter" && !e.shiftKey && !isMobile) {
                     e.preventDefault();
                     sendMessage();
                   }
@@ -841,8 +883,62 @@ export default function ChatRoomPage() {
         )}
       </div>
 
-      {showInvite && (
-        <InviteMemberModal
+      {/* Long press context menu */}
+      {contextMenu && (
+        <div
+          className="fixed inset-0 z-50 flex items-end justify-center"
+          onClick={() => { setContextMenu(null); setShowEmojiPicker(null); }}
+        >
+          <div
+            className="w-full max-w-sm mb-4 mx-4 bg-surface border border-border rounded-2xl overflow-hidden shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Emoji reactions row */}
+            <div className="flex justify-around px-4 py-3 border-b border-border">
+              {["👍","❤️","😂","😮","😢","🔥"].map(emoji => (
+                <button key={emoji} onClick={() => { toggleReaction(contextMenu.id, emoji); setContextMenu(null); }}
+                  className="text-2xl hover:scale-125 transition-transform active:scale-110">
+                  {emoji}
+                </button>
+              ))}
+            </div>
+            {/* Actions */}
+            <div className="py-1">
+              <button
+                onClick={() => { setReplyTo(contextMenu); setContextMenu(null); }}
+                className="w-full flex items-center gap-3 px-5 py-3 text-sm text-text hover:bg-panel transition-colors"
+              >
+                <Reply size={16} className="text-accent" /> Reply
+              </button>
+              <button
+                onClick={() => { pinMessage(contextMenu); setContextMenu(null); }}
+                className="w-full flex items-center gap-3 px-5 py-3 text-sm text-text hover:bg-panel transition-colors"
+              >
+                <Pin size={16} className={contextMenu.is_pinned ? "text-accent" : "text-text-dim"} />
+                {contextMenu.is_pinned ? "Unpin" : "Pin"}
+              </button>
+              {isOwn(contextMenu) && (
+                <>
+                  <button
+                    onClick={() => { setEditingMsg(contextMenu); setInput(contextMenu.content); setContextMenu(null); }}
+                    className="w-full flex items-center gap-3 px-5 py-3 text-sm text-text hover:bg-panel transition-colors"
+                  >
+                    <Edit2 size={16} className="text-text-dim" /> Edit
+                  </button>
+                  <button
+                    onClick={() => { deleteMessage(contextMenu.id); setContextMenu(null); }}
+                    className="w-full flex items-center gap-3 px-5 py-3 text-sm text-red-400 hover:bg-panel transition-colors"
+                  >
+                    <Trash2 size={16} /> Delete
+                  </button>
+                </>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showInvite && (        <InviteMemberModal
           roomId={roomId}
           currentUserId={currentUser?.id || ""}
           onClose={() => setShowInvite(false)}

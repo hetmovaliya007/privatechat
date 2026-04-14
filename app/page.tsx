@@ -23,12 +23,12 @@ export default function HomePage() {
           <span className="font-sans font-bold text-lg text-text">VoidChat</span>
         </div>
         <div className="flex gap-2">
-          <Link href="/auth/login"
-            className="px-3 py-2 text-xs sm:text-sm text-text-dim hover:text-text transition-colors">
+          <Link href="/auth/login" prefetch
+            className="px-3 py-2 text-xs sm:text-sm text-text-dim hover:text-text transition-colors touch-manipulation select-none">
             Sign In
           </Link>
-          <Link href="/auth/signup"
-            className="px-3 py-2 text-xs sm:text-sm bg-accent hover:bg-accent/90 text-white rounded-lg transition-all glow-accent">
+          <Link href="/auth/signup" prefetch
+            className="px-3 py-2 text-xs sm:text-sm bg-accent hover:bg-accent/90 text-white rounded-lg transition-all glow-accent touch-manipulation select-none">
             Get Started
           </Link>
         </div>
@@ -59,12 +59,12 @@ export default function HomePage() {
         </p>
 
         <div className="flex gap-4">
-          <Link href="/auth/signup"
-            className="px-8 py-3 bg-accent hover:bg-accent/90 text-white rounded-xl font-medium transition-all glow-accent text-sm">
+          <Link href="/auth/signup" prefetch
+            className="px-8 py-3 bg-accent hover:bg-accent/90 text-white rounded-xl font-medium transition-all glow-accent text-sm touch-manipulation select-none">
             Start Chatting — Free
           </Link>
-          <Link href="/auth/login"
-            className="px-8 py-3 border border-border hover:border-accent/50 text-text-dim hover:text-text rounded-xl font-medium transition-all text-sm">
+          <Link href="/auth/login" prefetch
+            className="px-8 py-3 border border-border hover:border-accent/50 text-text-dim hover:text-text rounded-xl font-medium transition-all text-sm touch-manipulation select-none">
             Sign In
           </Link>
         </div>
