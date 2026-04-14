@@ -3,7 +3,6 @@ import { useEffect, useState, useRef, useCallback } from "react";
 import { useParams } from "next/navigation";
 import { supabase } from "@/lib/supabase";
 import { encryptMessage, decryptMessage } from "@/lib/encryption";
-import { formatDistanceToNow } from "date-fns";
 import {
   Hash, Lock, Users, Paperclip, Smile, Send,
   X, Reply, Edit2, Trash2,
@@ -367,7 +366,27 @@ export default function ChatRoomPage() {
 
   const formatTime = (ts: string) => {
     try {
-      return formatDistanceToNow(new Date(ts), { addSuffix: true });
+      const date = new Date(ts);
+      const now = new Date();
+      const diff = now.getTime() - date.getTime();
+      const mins = Math.floor(diff / 60000);
+      const hours = Math.floor(diff / 3600000);
+      const days = Math.floor(diff / 86400000);
+
+      if (mins < 1) return "just now";
+      if (mins < 60) return `${mins}m ago`;
+      if (hours < 24) {
+        const h = date.getHours().toString().padStart(2, "0");
+        const m = date.getMinutes().toString().padStart(2, "0");
+        return `${h}:${m}`;
+      }
+      if (days < 7) {
+        const days_arr = ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"];
+        const h = date.getHours().toString().padStart(2, "0");
+        const m = date.getMinutes().toString().padStart(2, "0");
+        return `${days_arr[date.getDay()]} ${h}:${m}`;
+      }
+      return date.toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" });
     } catch {
       return "";
     }
@@ -387,7 +406,7 @@ export default function ChatRoomPage() {
   }
 
   return (
-    <div className="flex-1 flex flex-col h-screen bg-void overflow-hidden">
+    <div className="chat-container flex flex-col bg-void overflow-hidden">
       {/* Chat Header */}
       <header className="flex items-center justify-between px-4 py-3 border-b border-border glass shrink-0">
         <div className="flex items-center gap-2.5 min-w-0">
@@ -612,8 +631,8 @@ export default function ChatRoomPage() {
                       ) : null;
                     })()}
 
-                    {/* Hover actions */}
-                    <div className={`flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 transition-opacity ${own ? "flex-row-reverse" : ""}`}>
+                    {/* Hover actions - mobile pe always visible */}
+                    <div className={`flex items-center gap-1 mt-1 opacity-0 group-hover:opacity-100 sm:opacity-0 sm:group-hover:opacity-100 touch:opacity-100 transition-opacity ${own ? "flex-row-reverse" : ""}`}>
                       <button onClick={() => setReplyTo(msg)}
                         className="p-1 rounded-lg text-text-dim hover:text-text hover:bg-panel transition-all">
                         <Reply size={11} />

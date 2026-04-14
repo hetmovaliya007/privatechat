@@ -94,7 +94,7 @@ export default function ChatLayout({ children }: { children: React.ReactNode }) 
   }
 
   return (
-    <div className="h-screen flex bg-void overflow-hidden">
+    <div className="chat-container flex bg-void overflow-hidden">
       {/* Mobile top bar */}
       <div className="md:hidden fixed top-0 left-0 right-0 z-30 flex items-center gap-3 px-4 py-3 bg-surface border-b border-border">
         <button

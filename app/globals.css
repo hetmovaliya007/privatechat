@@ -25,6 +25,23 @@ html, body {
   overflow: hidden;
 }
 
+/* Mobile fix */
+@supports (-webkit-touch-callout: none) {
+  .h-screen-mobile {
+    height: -webkit-fill-available;
+  }
+}
+
+.chat-container {
+  height: 100dvh;
+}
+
+@media (max-width: 768px) {
+  .chat-container {
+    height: 100dvh;
+  }
+}
+
 ::-webkit-scrollbar {
   width: 4px;
 }
