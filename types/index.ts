@@ -3,6 +3,7 @@ export interface User {
   email: string;
   username: string;
   avatar_url?: string;
+  bio?: string;
   status: "online" | "offline" | "away";
   created_at: string;
 }
@@ -14,6 +15,7 @@ export interface Room {
   type: "direct" | "group";
   created_by: string;
   avatar_url?: string;
+  invite_code?: string;
   created_at: string;
   members?: RoomMember[];
   last_message?: Message;
@@ -41,9 +43,11 @@ export interface Message {
   reply_to?: string;
   is_edited: boolean;
   is_deleted: boolean;
+  is_pinned?: boolean;
   created_at: string;
   sender?: User;
   reply_message?: Message;
+  optimistic?: boolean;
 }
 
 export interface Reaction {

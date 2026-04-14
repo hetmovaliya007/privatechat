@@ -7,7 +7,7 @@ import { formatDistanceToNow } from "date-fns";
 import {
   Hash, Lock, Users, Paperclip, Smile, Send,
   X, Reply, Edit2, Trash2,
-  Shield, ChevronDown, UserPlus, ChevronUp, Copy
+  Shield, ChevronDown, UserPlus, ChevronUp, Copy, Search, Pin
 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { Message, Room, User, Reaction } from "@/types";
@@ -35,6 +35,10 @@ export default function ChatRoomPage() {
   const [showInvite, setShowInvite] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const [loadingMore, setLoadingMore] = useState(false);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [showSearch, setShowSearch] = useState(false);
+  const [pinnedMessages, setPinnedMessages] = useState<Message[]>([]);
+  const [showPinned, setShowPinned] = useState(false);
   const oldestMsgRef = useRef<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const messagesRef = useRef<HTMLDivElement>(null);
@@ -88,6 +92,7 @@ export default function ChatRoomPage() {
         setMessages(decrypted);
         setHasMore(msgs.length === 50);
         if (ordered.length > 0) oldestMsgRef.current = ordered[0].created_at;
+        setPinnedMessages(decrypted.filter(m => m.is_pinned));
       }
 
       // Reactions
@@ -174,6 +179,10 @@ export default function ChatRoomPage() {
           if (prev.find(m => m.id === fullMsg.id)) return prev;
           return [...prev, fullMsg];
         });
+        // Browser notification
+        if (fullMsg.sender_id !== currentUser?.id) {
+          sendBrowserNotification(fullMsg.sender?.username || "Someone", fullMsg.type === "text" ? fullMsg.content : `[${fullMsg.type}]`);
+        }
         scrollToBottom();
       })
       .on("postgres_changes", {
@@ -238,49 +247,82 @@ export default function ChatRoomPage() {
   const sendMessage = async () => {
     if ((!input.trim() && !editingMsg) || sending || !currentUser) return;
     setSending(true);
+
+    if (editingMsg) {
+      const encrypted = encryptMessage(input.trim());
+      setMessages(prev => prev.map(m => m.id === editingMsg.id ? { ...m, content: input.trim(), is_edited: true } : m));
+      setEditingMsg(null);
+      setInput("");
+      setSending(false);
+      await supabase.from("messages").update({ content: encrypted, is_edited: true }).eq("id", editingMsg.id);
+      return;
+    }
+
+    // Optimistic UI — show instantly
+    const tempId = `temp-${Date.now()}`;
+    const reply_message = replyTo ? messages.find(m => m.id === replyTo.id) : undefined;
+    const optimisticMsg: Message = {
+      id: tempId,
+      room_id: roomId,
+      sender_id: currentUser.id,
+      content: input.trim(),
+      type: "text",
+      reply_to: replyTo?.id,
+      reply_message,
+      is_edited: false,
+      is_deleted: false,
+      created_at: new Date().toISOString(),
+      sender: currentUser,
+      optimistic: true,
+    };
+    setMessages(prev => [...prev, optimisticMsg]);
+    scrollToBottom();
+    const msgText = input.trim();
+    setInput("");
+    setReplyTo(null);
+    setSending(false);
+
     try {
-      if (editingMsg) {
-        const encrypted = encryptMessage(input.trim());
-        await supabase.from("messages").update({ content: encrypted, is_edited: true }).eq("id", editingMsg.id);
-        setEditingMsg(null);
-        setInput("");
-      } else {
-        const encrypted = encryptMessage(input.trim());
-        // Fetch reply_message for optimistic UI
-        let reply_message: Message | undefined;
-        if (replyTo) {
-          reply_message = messages.find(m => m.id === replyTo.id);
-        }
-        const { data: inserted } = await supabase.from("messages").insert({
-          room_id: roomId,
-          sender_id: currentUser.id,
-          content: encrypted,
-          type: "text",
-          reply_to: replyTo?.id || null,
-          is_edited: false,
-          is_deleted: false,
-        }).select().single();
-        if (inserted) {
-          setMessages(prev => {
-            if (prev.find(m => m.id === inserted.id)) return prev;
-            return [...prev, { ...inserted, content: input.trim(), sender: currentUser, reply_message }];
-          });
-          scrollToBottom();
-        }
-        setInput("");
-        setReplyTo(null);
+      const encrypted = encryptMessage(msgText);
+      const { data: inserted } = await supabase.from("messages").insert({
+        room_id: roomId,
+        sender_id: currentUser.id,
+        content: encrypted,
+        type: "text",
+        reply_to: replyTo?.id || null,
+        is_edited: false,
+        is_deleted: false,
+      }).select().single();
+      // Replace optimistic with real
+      if (inserted) {
+        setMessages(prev => prev.map(m => m.id === tempId ? { ...inserted, content: msgText, sender: currentUser, reply_message } : m));
       }
     } catch {
+      // Remove optimistic on failure
+      setMessages(prev => prev.filter(m => m.id !== tempId));
       toast.error("Failed to send message");
-    } finally {
-      setSending(false);
     }
   };
 
   const deleteMessage = async (msgId: string) => {
     await supabase.from("messages").update({ is_deleted: true, content: "" }).eq("id", msgId);
+    setMessages(prev => prev.filter(m => m.id !== msgId));
     toast.success("Message deleted");
   };
+
+  const pinMessage = async (msg: Message) => {
+    const newPinned = !msg.is_pinned;
+    await supabase.from("messages").update({ is_pinned: newPinned }).eq("id", msg.id);
+    setMessages(prev => prev.map(m => m.id === msg.id ? { ...m, is_pinned: newPinned } : m));
+    setPinnedMessages(prev => newPinned ? [...prev, { ...msg, is_pinned: true }] : prev.filter(p => p.id !== msg.id));
+    toast.success(newPinned ? "Message pinned!" : "Message unpinned");
+  };
+
+  const sendBrowserNotification = useCallback((senderName: string, content: string) => {
+    if (Notification.permission === "granted" && document.hidden) {
+      new Notification(`${senderName} — VoidChat`, { body: content, icon: "/favicon.ico" });
+    }
+  }, []);
 
   const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
@@ -377,19 +419,24 @@ export default function ChatRoomPage() {
                   }
                 }}
                 className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs text-text-dim hover:text-accent hover:bg-accent/10 transition-all"
-                title="Invite code copy karo"
               >
                 <Copy size={13} />
                 <span className="hidden sm:inline">Invite</span>
               </button>
-              <button
-                onClick={() => setShowInvite(true)}
-                className="p-1.5 rounded-lg text-text-dim hover:text-accent hover:bg-accent/10 transition-all"
-                title="Invite member"
-              >
+              <button onClick={() => setShowInvite(true)} className="p-1.5 rounded-lg text-text-dim hover:text-accent hover:bg-accent/10 transition-all">
                 <UserPlus size={14} />
               </button>
             </>
+          )}
+          <button onClick={() => setShowSearch(!showSearch)}
+            className={`p-1.5 rounded-lg text-xs transition-all ${showSearch ? "bg-accent/15 text-accent" : "text-text-dim hover:text-text hover:bg-panel"}`}>
+            <Search size={14} />
+          </button>
+          {pinnedMessages.length > 0 && (
+            <button onClick={() => setShowPinned(!showPinned)}
+              className={`p-1.5 rounded-lg text-xs transition-all ${showPinned ? "bg-accent/15 text-accent" : "text-text-dim hover:text-text hover:bg-panel"}`}>
+              <Pin size={14} />
+            </button>
           )}
           <button
             onClick={() => setShowMembers(!showMembers)}
@@ -404,6 +451,43 @@ export default function ChatRoomPage() {
       <div className="flex flex-1 overflow-hidden">
         {/* Messages area */}
         <div className="flex-1 flex flex-col overflow-hidden relative">
+
+          {/* Search bar */}
+          {showSearch && (
+            <div className="px-4 py-2 border-b border-border bg-surface">
+              <div className="relative">
+                <Search size={13} className="absolute left-3 top-1/2 -translate-y-1/2 text-text-dim" />
+                <input
+                  autoFocus
+                  type="text"
+                  placeholder="Messages search karo..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className="w-full bg-void border border-border rounded-lg pl-8 pr-3 py-2 text-text text-xs placeholder:text-muted focus:border-accent/40 transition-colors"
+                />
+              </div>
+              {searchQuery && (
+                <p className="text-text-dim text-[10px] mt-1">
+                  {messages.filter(m => m.content.toLowerCase().includes(searchQuery.toLowerCase())).length} results
+                </p>
+              )}
+            </div>
+          )}
+
+          {/* Pinned messages */}
+          {showPinned && pinnedMessages.length > 0 && (
+            <div className="px-4 py-2 border-b border-border bg-accent/5">
+              <p className="text-accent text-[10px] font-mono uppercase mb-2">📌 Pinned Messages</p>
+              <div className="space-y-1">
+                {pinnedMessages.map(pm => (
+                  <div key={pm.id} className="flex items-center gap-2 text-xs text-text-dim">
+                    <span className="text-accent/70 font-medium">{pm.sender?.username}:</span>
+                    <span className="truncate">{pm.type === "text" ? pm.content : `[${pm.type}]`}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
           <div
             ref={messagesRef}
             onScroll={handleScroll}
@@ -439,9 +523,11 @@ export default function ChatRoomPage() {
               </div>
             )}
 
-            {messages.map((msg, idx) => {
+            {messages.filter(m =>
+              !searchQuery || m.content.toLowerCase().includes(searchQuery.toLowerCase())
+            ).map((msg, idx, arr) => {
               const own = isOwn(msg);
-              const prevMsg = messages[idx - 1];
+              const prevMsg = arr[idx - 1];
               const showAvatar = !prevMsg || prevMsg.sender_id !== msg.sender_id;
 
               return (
@@ -531,6 +617,10 @@ export default function ChatRoomPage() {
                       <button onClick={() => setReplyTo(msg)}
                         className="p-1 rounded-lg text-text-dim hover:text-text hover:bg-panel transition-all">
                         <Reply size={11} />
+                      </button>
+                      <button onClick={() => pinMessage(msg)}
+                        className={`p-1 rounded-lg transition-all ${msg.is_pinned ? "text-accent" : "text-text-dim hover:text-text hover:bg-panel"}`}>
+                        <Pin size={11} />
                       </button>
                       <div className="relative">
                         <button
