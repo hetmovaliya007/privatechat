@@ -738,6 +738,7 @@ export default function ChatRoomPage() {
               {/* File upload */}
               <input ref={fileInputRef} type="file" className="hidden" onChange={handleFileUpload} accept="image/*,.pdf,.doc,.docx,.txt,.zip" />
               <button
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={() => fileInputRef.current?.click()}
                 disabled={uploadingFile}
                 className="text-text-dim hover:text-accent transition-colors shrink-0 mb-1 disabled:opacity-50"
@@ -771,6 +772,7 @@ export default function ChatRoomPage() {
               />
 
               <button
+                onMouseDown={(e) => e.preventDefault()}
                 onClick={sendMessage}
                 disabled={(!input.trim() && !editingMsg) || sending}
                 className="w-8 h-8 rounded-xl bg-accent hover:bg-accent/90 disabled:opacity-30 text-white flex items-center justify-center shrink-0 transition-all glow-accent"
