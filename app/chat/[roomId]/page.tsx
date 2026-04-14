@@ -20,6 +20,7 @@ export default function ChatRoomPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [currentUser, setCurrentUser] = useState<User | null>(null);
   const [members, setMembers] = useState<User[]>([]);
+  const [memberRoles, setMemberRoles] = useState<Record<string, string>>({});
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
@@ -66,11 +67,14 @@ export default function ChatRoomPage() {
       // Members
       const { data: memberData } = await supabase
         .from("room_members")
-        .select("user_id, profiles(id, username, email, status, avatar_url)")
+        .select("user_id, role, profiles(id, username, email, status, avatar_url)")
         .eq("room_id", roomId);
       if (memberData) {
         const users = memberData.map((m: { profiles: unknown }) => m.profiles).filter(Boolean) as User[];
         setMembers(users);
+        const roles: Record<string, string> = {};
+        memberData.forEach((m: { user_id: string; role: string }) => { roles[m.user_id] = m.role; });
+        setMemberRoles(roles);
       }
 
       // Messages
@@ -792,20 +796,37 @@ export default function ChatRoomPage() {
               <h3 className="text-xs font-semibold text-text-dim uppercase tracking-wider">Members · {members.length}</h3>
             </div>
             <div className="p-2 space-y-0.5">
-              {members.map(member => (
-                <div key={member.id} className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-panel transition-colors">
-                  <div className="relative">
-                    <div className="w-7 h-7 rounded-lg bg-accent/20 flex items-center justify-center">
-                      <span className="text-accent text-xs font-bold">{member.username[0].toUpperCase()}</span>
+              {/* Admins first, then members */}
+              {[...members].sort((a, b) => {
+                const aRole = memberRoles[a.id] || "member";
+                const bRole = memberRoles[b.id] || "member";
+                if (aRole === "admin" && bRole !== "admin") return -1;
+                if (aRole !== "admin" && bRole === "admin") return 1;
+                return 0;
+              }).map(member => {
+                const role = memberRoles[member.id] || "member";
+                const isAdmin = role === "admin";
+                return (
+                  <div key={member.id} className="flex items-center gap-2.5 px-2 py-2 rounded-lg hover:bg-panel transition-colors">
+                    <div className="relative">
+                      <div className={`w-7 h-7 rounded-lg flex items-center justify-center ${isAdmin ? "bg-accent/30" : "bg-accent/20"}`}>
+                        <span className="text-accent text-xs font-bold">{member.username[0].toUpperCase()}</span>
+                      </div>
+                      <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-surface status-${member.status}`} />
                     </div>
-                    <div className={`absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full border-2 border-surface status-${member.status}`} />
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-1">
+                        <p className="text-text text-xs font-medium truncate">{member.username}</p>
+                        {isAdmin && (
+                          <span className="shrink-0 text-[9px] font-bold text-accent bg-accent/15 px-1 py-0.5 rounded">ADMIN</span>
+                        )}
+                      </div>
+                      <p className="text-text-dim text-[10px] truncate">{member.email}</p>
+                      <p className="text-text-dim text-[10px] capitalize">{member.status}</p>
+                    </div>
                   </div>
-                  <div>
-                    <p className="text-text text-xs font-medium">{member.username}</p>
-                    <p className="text-text-dim text-[10px] capitalize">{member.status}</p>
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </aside>
         )}
@@ -820,10 +841,15 @@ export default function ChatRoomPage() {
             setShowInvite(false);
             supabase
               .from("room_members")
-              .select("user_id, profiles(id, username, email, status, avatar_url)")
+              .select("user_id, role, profiles(id, username, email, status, avatar_url)")
               .eq("room_id", roomId)
               .then(({ data }) => {
-                if (data) setMembers(data.map((m: { profiles: unknown }) => m.profiles).filter(Boolean) as User[]);
+                if (data) {
+                  setMembers(data.map((m: { profiles: unknown }) => m.profiles).filter(Boolean) as User[]);
+                  const roles: Record<string, string> = {};
+                  data.forEach((m: { user_id: string; role: string }) => { roles[m.user_id] = m.role; });
+                  setMemberRoles(roles);
+                }
               });
           }}
         />
