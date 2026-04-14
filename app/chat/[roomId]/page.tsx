@@ -7,7 +7,7 @@ import { formatDistanceToNow } from "date-fns";
 import {
   Hash, Lock, Users, Paperclip, Smile, Send,
   X, Reply, Edit2, Trash2,
-  Shield, ChevronDown, UserPlus, ChevronUp
+  Shield, ChevronDown, UserPlus, ChevronUp, Copy
 } from "lucide-react";
 import toast from "react-hot-toast";
 import type { Message, Room, User, Reaction } from "@/types";
@@ -368,13 +368,29 @@ export default function ChatRoomPage() {
 
         <div className="flex items-center gap-2 shrink-0">
           {room?.type === "group" && (
-            <button
-              onClick={() => setShowInvite(true)}
-              className="p-1.5 rounded-lg text-text-dim hover:text-accent hover:bg-accent/10 transition-all"
-              title="Invite member"
-            >
-              <UserPlus size={14} />
-            </button>
+            <>
+              <button
+                onClick={async () => {
+                  const { data } = await supabase.from("rooms").select("invite_code").eq("id", roomId).single();
+                  if (data?.invite_code) {
+                    navigator.clipboard.writeText(data.invite_code);
+                    toast.success(`Invite code copied: ${data.invite_code}`);
+                  }
+                }}
+                className="flex items-center gap-1 px-2 py-1.5 rounded-lg text-xs text-text-dim hover:text-accent hover:bg-accent/10 transition-all"
+                title="Invite code copy karo"
+              >
+                <Copy size={13} />
+                <span className="hidden sm:inline">Invite</span>
+              </button>
+              <button
+                onClick={() => setShowInvite(true)}
+                className="p-1.5 rounded-lg text-text-dim hover:text-accent hover:bg-accent/10 transition-all"
+                title="Invite member"
+              >
+                <UserPlus size={14} />
+              </button>
+            </>
           )}
           <button
             onClick={() => setShowMembers(!showMembers)}

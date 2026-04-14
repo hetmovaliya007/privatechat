@@ -48,11 +48,22 @@ CREATE TABLE IF NOT EXISTS public.messages (
   created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
+-- REACTIONS TABLE
+CREATE TABLE IF NOT EXISTS public.reactions (
+  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
+  message_id UUID REFERENCES public.messages(id) ON DELETE CASCADE NOT NULL,
+  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
+  emoji TEXT NOT NULL,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  UNIQUE(message_id, user_id, emoji)
+);
+
 -- ENABLE RLS
 ALTER TABLE public.profiles ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.rooms ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.room_members ENABLE ROW LEVEL SECURITY;
 ALTER TABLE public.messages ENABLE ROW LEVEL SECURITY;
+ALTER TABLE public.reactions ENABLE ROW LEVEL SECURITY;
 
 -- PROFILES POLICIES
 DO $$ BEGIN
@@ -136,6 +147,25 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
+-- REACTIONS POLICIES
+DO $$ BEGIN
+  CREATE POLICY "Reactions viewable by authenticated users"
+    ON public.reactions FOR SELECT TO authenticated USING (true);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE POLICY "Users can add reactions"
+    ON public.reactions FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  CREATE POLICY "Users can remove own reactions"
+    ON public.reactions FOR DELETE TO authenticated USING (auth.uid() = user_id);
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
 -- REALTIME
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.messages;
@@ -149,6 +179,11 @@ END $$;
 
 DO $$ BEGIN
   ALTER PUBLICATION supabase_realtime ADD TABLE public.room_members;
+EXCEPTION WHEN duplicate_object THEN NULL;
+END $$;
+
+DO $$ BEGIN
+  ALTER PUBLICATION supabase_realtime ADD TABLE public.reactions;
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
@@ -182,48 +217,12 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL;
 END $$;
 
--- REACTIONS TABLE
-CREATE TABLE IF NOT EXISTS public.reactions (
-  id UUID DEFAULT uuid_generate_v4() PRIMARY KEY,
-  message_id UUID REFERENCES public.messages(id) ON DELETE CASCADE NOT NULL,
-  user_id UUID REFERENCES public.profiles(id) ON DELETE CASCADE NOT NULL,
-  emoji TEXT NOT NULL,
-  created_at TIMESTAMPTZ DEFAULT NOW(),
-  UNIQUE(message_id, user_id, emoji)
-);
-
-ALTER TABLE public.reactions ENABLE ROW LEVEL SECURITY;
-
-DO $$ BEGIN
-  CREATE POLICY "Reactions viewable by room members"
-    ON public.reactions FOR SELECT TO authenticated USING (true);
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Users can add reactions"
-    ON public.reactions FOR INSERT TO authenticated WITH CHECK (auth.uid() = user_id);
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
-
-DO $$ BEGIN
-  CREATE POLICY "Users can remove own reactions"
-    ON public.reactions FOR DELETE TO authenticated USING (auth.uid() = user_id);
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
-
-DO $$ BEGIN
-  ALTER PUBLICATION supabase_realtime ADD TABLE public.reactions;
-EXCEPTION WHEN duplicate_object THEN NULL;
-END $$;
-
-CREATE INDEX IF NOT EXISTS idx_reactions_message_id ON public.reactions(message_id);
-
 -- INDEXES
 CREATE INDEX IF NOT EXISTS idx_messages_room_id ON public.messages(room_id);
 CREATE INDEX IF NOT EXISTS idx_messages_created_at ON public.messages(created_at);
 CREATE INDEX IF NOT EXISTS idx_room_members_user_id ON public.room_members(user_id);
 CREATE INDEX IF NOT EXISTS idx_room_members_room_id ON public.room_members(room_id);
+CREATE INDEX IF NOT EXISTS idx_reactions_message_id ON public.reactions(message_id);
 
 -- AUTO CREATE PROFILE ON SIGNUP
 CREATE OR REPLACE FUNCTION public.handle_new_user()
