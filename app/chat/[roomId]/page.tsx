@@ -91,6 +91,38 @@ export default function ChatRoomPage() {
   useEffect(() => { membersRef.current = members; }, [members]);
   useEffect(() => { currentUserRef.current = currentUser; }, [currentUser]);
 
+  // Polling fallback — realtime miss hone par naye messages fetch karo
+  useEffect(() => {
+    const interval = setInterval(async () => {
+      if (!roomId || document.hidden) return;
+      const latest = messagesRef2.current.filter(m => !m.optimistic).slice(-1)[0];
+      if (!latest) return;
+      const { data } = await supabase
+        .from("messages")
+        .select("*, sender:profiles(id, username, email, status, avatar_url)")
+        .eq("room_id", roomId)
+        .eq("is_deleted", false)
+        .gt("created_at", latest.created_at)
+        .order("created_at", { ascending: true });
+      if (data && data.length > 0) {
+        const newMsgs = data.map((m: Message) => ({
+          ...m,
+          content: m.type === "text" ? decryptMessage(m.content) : m.content,
+        }));
+        setMessages(prev => {
+          const existingIds = new Set(prev.filter(m => !m.optimistic).map(m => m.id));
+          const toAdd = newMsgs.filter((m: Message) => !existingIds.has(m.id));
+          if (toAdd.length === 0) return prev;
+          if (isNearBottom()) setTimeout(() => scrollToBottom(), 50);
+          // Remove any matching optimistic messages
+          const cleaned = prev.filter(m => !m.optimistic || !toAdd.find((a: Message) => a.sender_id === m.sender_id));
+          return [...cleaned, ...toAdd];
+        });
+      }
+    }, 2000);
+    return () => clearInterval(interval);
+  }, [roomId, scrollToBottom, isNearBottom]);
+
   // Fetch initial data
   useEffect(() => {
     const init = async () => {
